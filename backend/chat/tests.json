@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "GET messages (empty)",
+      "method": "GET",
+      "path": "/?since_id=0",
+      "expectedStatus": 200,
+      "expectedBody": {"messages": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST send message",
+      "method": "POST",
+      "path": "/",
+      "body": {"sender_name": "Тест", "text": "Привет из теста!"},
+      "expectedStatus": 200,
+      "expectedBody": {"sender_name": "Тест", "text": "Привет из теста!"},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST missing fields",
+      "method": "POST",
+      "path": "/",
+      "body": {},
+      "expectedStatus": 400,
+      "expectedBody": {"error": "sender_name and text are required"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
