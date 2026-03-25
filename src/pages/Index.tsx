@@ -233,6 +233,22 @@ function ChatsSection({ user, onSelectChat, selectedChatId }: {
   );
 }
 
+function useNotifications(partnerName: string) {
+  const requestPermission = useCallback(async () => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") await Notification.requestPermission();
+  }, []);
+
+  const notify = useCallback((text: string) => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    if (document.visibilityState === "visible") return;
+    new Notification(partnerName, { body: text, icon: "/favicon.ico" });
+  }, [partnerName]);
+
+  return { requestPermission, notify };
+}
+
 // ——— Chat View ———
 function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -240,6 +256,10 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef(0);
+  const isFirstLoad = useRef(true);
+  const { requestPermission, notify } = useNotifications(chat.partner_name);
+
+  useEffect(() => { requestPermission(); }, [requestPermission]);
 
   const loadMessages = useCallback(async () => {
     const res = await fetch(`${API.messages}?chat_id=${chat.id}&since_id=${lastIdRef.current}`);
@@ -252,9 +272,17 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
         }
         return merged;
       });
+      if (!isFirstLoad.current) {
+        for (const m of data.messages) {
+          if (m.sender_id !== user.id) notify(m.text);
+        }
+      }
       lastIdRef.current = data.messages[data.messages.length - 1].id;
+      isFirstLoad.current = false;
+    } else {
+      isFirstLoad.current = false;
     }
-  }, [chat.id]);
+  }, [chat.id, user.id, notify]);
 
   useEffect(() => {
     setMessages([]);
