@@ -1,0 +1,13 @@
+{
+  "tests": [
+    {
+      "name": "Register user",
+      "method": "POST",
+      "path": "/",
+      "body": {"name": "Тест Пользователь"},
+      "expectedStatus": 200,
+      "expectedBody": {"id": "string", "name": "string", "invite_code": "string"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
