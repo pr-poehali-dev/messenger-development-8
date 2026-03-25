@@ -55,6 +55,7 @@ def handler(event: dict, context) -> dict:
             SELECT c.id,
                    CASE WHEN c.user_a = %s THEN ub.id ELSE ua.id END AS partner_id,
                    CASE WHEN c.user_a = %s THEN ub.name ELSE ua.name END AS partner_name,
+                   CASE WHEN c.user_a = %s THEN ub.avatar_url ELSE ua.avatar_url END AS partner_avatar,
                    (SELECT text FROM chat_messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) AS last_msg,
                    (SELECT created_at FROM chat_messages WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) AS last_time
             FROM chats c
@@ -62,7 +63,7 @@ def handler(event: dict, context) -> dict:
             JOIN users ub ON ub.id = c.user_b
             WHERE c.user_a = %s OR c.user_b = %s
             ORDER BY last_time DESC NULLS LAST
-        """, (user_id, user_id, user_id, user_id))
+        """, (user_id, user_id, user_id, user_id, user_id))
         rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -72,8 +73,9 @@ def handler(event: dict, context) -> dict:
                 "id": str(r[0]),
                 "partner_id": str(r[1]),
                 "partner_name": r[2],
-                "last_msg": r[3],
-                "last_time": r[4].isoformat() if r[4] else None,
+                "partner_avatar": r[3],
+                "last_msg": r[4],
+                "last_time": r[5].isoformat() if r[5] else None,
             }
             for r in rows
         ]

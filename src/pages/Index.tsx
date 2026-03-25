@@ -9,7 +9,7 @@ const API = {
 };
 
 interface User { id: string; name: string; invite_code: string; avatar_url?: string }
-interface Chat { id: string; partner_id: string; partner_name: string; last_msg: string | null; last_time: string | null }
+interface Chat { id: string; partner_id: string; partner_name: string; partner_avatar?: string; last_msg: string | null; last_time: string | null }
 interface Message { id: number; sender_id: string; sender_name: string; text: string; created_at: string }
 
 const SECTIONS = [
@@ -246,7 +246,7 @@ function ChatsSection({ user, onSelectChat, selectedChatId, onUnreadChange }: {
               }`}
               style={{ animationDelay: `${i * 40}ms` }}
             >
-              <Avatar name={chat.partner_name} />
+              <Avatar name={chat.partner_name} avatarUrl={chat.partner_avatar} />
               <div className="flex-1 min-w-0 text-left">
                 <div className="flex items-center justify-between mb-0.5">
                   <span className={`text-sm font-semibold truncate ${selectedChatId === chat.id ? "text-neon" : "text-foreground"}`}>
@@ -382,7 +382,7 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
         <button onClick={onBack} className="md:hidden w-8 h-8 rounded-full hover:bg-secondary flex items-center justify-center transition-colors mr-1">
           <Icon name="ChevronLeft" size={18} className="text-muted-foreground" />
         </button>
-        <Avatar name={chat.partner_name} size="sm" />
+        <Avatar name={chat.partner_name} avatarUrl={chat.partner_avatar} size="sm" />
         <div className="flex-1">
           <p className="text-sm font-semibold text-foreground">{chat.partner_name}</p>
         </div>
