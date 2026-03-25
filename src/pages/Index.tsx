@@ -10,7 +10,7 @@ const API = {
 
 interface User { id: string; name: string; invite_code: string; avatar_url?: string }
 interface Chat { id: string; partner_id: string; partner_name: string; partner_avatar?: string; last_msg: string | null; last_time: string | null }
-interface Message { id: number; sender_id: string; sender_name: string; text: string; created_at: string }
+interface Message { id: number; sender_id: string; sender_name: string; text: string; image_url?: string; created_at: string }
 
 const SECTIONS = [
   { id: "chats", icon: "MessageCircle", label: "Чаты" },
@@ -314,9 +314,12 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
   const [messages, setMessages] = useState<Message[]>([]);
   const [msg, setMsg] = useState("");
   const [sending, setSending] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ base64: string; contentType: string; dataUrl: string } | null>(null);
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef(0);
   const isFirstLoad = useRef(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { requestPermission, notify } = useNotifications(chat.partner_name);
 
   useEffect(() => { requestPermission(); }, [requestPermission]);
@@ -334,7 +337,7 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
       });
       if (!isFirstLoad.current) {
         for (const m of data.messages) {
-          if (m.sender_id !== user.id) notify(m.text);
+          if (m.sender_id !== user.id) notify(m.text || "📷 Фото");
         }
       }
       lastIdRef.current = data.messages[data.messages.length - 1].id;
@@ -347,6 +350,7 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
   useEffect(() => {
     setMessages([]);
     lastIdRef.current = 0;
+    isFirstLoad.current = true;
     loadMessages();
     const interval = setInterval(loadMessages, 2000);
     return () => clearInterval(interval);
@@ -356,15 +360,36 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(",")[1];
+      setImagePreview({ base64, contentType: file.type, dataUrl });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   const handleSend = async () => {
+    if (sending) return;
     const text = msg.trim();
-    if (!text || sending) return;
+    if (!text && !imagePreview) return;
     setSending(true);
     setMsg("");
+    const payload: Record<string, string> = { chat_id: chat.id, sender_id: user.id };
+    if (text) payload.text = text;
+    if (imagePreview) {
+      payload.image_base64 = imagePreview.base64;
+      payload.content_type = imagePreview.contentType;
+      setImagePreview(null);
+    }
     await fetch(API.messages, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chat.id, sender_id: user.id, text }),
+      body: JSON.stringify(payload),
     });
     setSending(false);
     loadMessages();
@@ -376,8 +401,19 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
 
   const formatTime = (iso: string) => new Date(iso).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
 
+  const canSend = (msg.trim() || imagePreview) && !sending;
+
   return (
     <div className="flex flex-col h-full animate-slide-in-right">
+      {lightbox && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onClick={() => setLightbox(null)}>
+          <img src={lightbox} alt="" className="max-w-full max-h-full object-contain rounded-xl" />
+          <button className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
+            <Icon name="X" size={18} className="text-white" />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border glass sticky top-0 z-10">
         <button onClick={onBack} className="md:hidden w-8 h-8 rounded-full hover:bg-secondary flex items-center justify-center transition-colors mr-1">
           <Icon name="ChevronLeft" size={18} className="text-muted-foreground" />
@@ -399,9 +435,17 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
           return (
             <div key={m.id} className={`flex ${isOut ? "justify-end" : "justify-start"}`}>
               <div className="max-w-[72%]">
-                <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${isOut ? "msg-bubble-out text-background rounded-br-sm" : "msg-bubble-in text-foreground rounded-bl-sm"}`}>
-                  {m.text}
-                </div>
+                {m.image_url && (
+                  <div className={`rounded-2xl overflow-hidden mb-0.5 cursor-pointer ${isOut ? "rounded-br-sm" : "rounded-bl-sm"}`}
+                    onClick={() => setLightbox(m.image_url!)}>
+                    <img src={m.image_url} alt="фото" className="max-w-[240px] w-full object-cover hover:opacity-90 transition-opacity" />
+                  </div>
+                )}
+                {m.text && (
+                  <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${isOut ? "msg-bubble-out text-background rounded-br-sm" : "msg-bubble-in text-foreground rounded-bl-sm"}`}>
+                    {m.text}
+                  </div>
+                )}
                 <p className={`text-xs text-muted-foreground mt-1 ${isOut ? "text-right" : "text-left"}`}>{formatTime(m.created_at)}</p>
               </div>
             </div>
@@ -411,7 +455,19 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
       </div>
 
       <div className="px-4 pb-4 pt-2">
+        {imagePreview && (
+          <div className="mb-2 relative inline-block">
+            <img src={imagePreview.dataUrl} alt="превью" className="h-24 rounded-xl object-cover" />
+            <button onClick={() => setImagePreview(null)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
+              <Icon name="X" size={11} className="text-white" />
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2 bg-secondary rounded-2xl px-3 py-2">
+          <button onClick={() => fileInputRef.current?.click()} className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-neon transition-colors flex-shrink-0">
+            <Icon name="Paperclip" size={18} />
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
           <textarea
             value={msg}
             onChange={e => setMsg(e.target.value)}
@@ -422,10 +478,10 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
           />
           <button
             onClick={handleSend}
-            disabled={!msg.trim() || sending}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${msg.trim() ? "neon-bg text-background" : "bg-muted text-muted-foreground"}`}
+            disabled={!canSend}
+            className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${canSend ? "neon-bg text-background" : "bg-muted text-muted-foreground"}`}
           >
-            <Icon name="Send" size={16} />
+            {sending ? <Icon name="Loader" size={15} className="animate-spin" /> : <Icon name="Send" size={16} />}
           </button>
         </div>
         <div className="flex items-center justify-center gap-1 mt-2">
