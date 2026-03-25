@@ -382,7 +382,8 @@ function NotificationsSection() {
   );
 }
 
-function ProfileSection() {
+function ProfileSection({ userName }: { userName: string }) {
+  const initials = userName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="p-4 pb-3">
@@ -392,13 +393,13 @@ function ProfileSection() {
         <div className="flex flex-col items-center py-6 mb-4">
           <div className="relative mb-4">
             <div className="w-20 h-20 rounded-full bg-secondary flex items-center justify-center text-2xl font-bold text-foreground ring-4 ring-neon/30">
-              ЮВ
+              {initials}
             </div>
             <div className="absolute bottom-0 right-0 w-6 h-6 rounded-full neon-bg flex items-center justify-center">
               <Icon name="Camera" size={12} className="text-background" />
             </div>
           </div>
-          <h3 className="text-xl font-bold text-foreground">Юрий Волков</h3>
+          <h3 className="text-xl font-bold text-foreground">{userName}</h3>
           <p className="text-sm text-neon mt-1">@orbit_yura</p>
           <p className="text-sm text-muted-foreground mt-2 text-center max-w-[200px]">Разработчик · Люблю космос и чистый код 🚀</p>
         </div>
@@ -441,7 +442,7 @@ function ProfileSection() {
   );
 }
 
-function SettingsSection() {
+function SettingsSection({ onLogout }: { onLogout: () => void }) {
   const [encEnabled, setEncEnabled] = useState(true);
   const [notifEnabled, setNotifEnabled] = useState(true);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
@@ -508,7 +509,7 @@ function SettingsSection() {
 
         <div>
           <div className="bg-secondary/60 rounded-2xl overflow-hidden">
-            <button className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-destructive/10 transition-colors">
+            <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-destructive/10 transition-colors">
               <div className="w-8 h-8 rounded-xl bg-destructive/10 flex items-center justify-center">
                 <Icon name="LogOut" size={15} className="text-destructive" />
               </div>
@@ -573,10 +574,63 @@ function SearchSection() {
   );
 }
 
+function LoginScreen({ onEnter }: { onEnter: (name: string) => void }) {
+  const [name, setName] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onEnter(trimmed);
+  };
+
+  return (
+    <div className="h-screen w-screen flex items-center justify-center bg-background font-golos">
+      <div className="w-full max-w-sm px-6 animate-fade-in">
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-16 h-16 rounded-2xl neon-bg flex items-center justify-center mb-4">
+            <span className="text-background font-black text-2xl">O</span>
+          </div>
+          <h1 className="text-2xl font-bold text-foreground">Orbit Messenger</h1>
+          <p className="text-sm text-muted-foreground mt-1">Как вас зовут?</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            autoFocus
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Введите ваше имя..."
+            className="w-full bg-secondary rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-neon/40 transition-all"
+          />
+          <button
+            type="submit"
+            disabled={!name.trim()}
+            className="w-full py-3 rounded-xl text-sm font-semibold transition-all neon-bg text-background disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90"
+          >
+            Войти
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Index() {
+  const [userName, setUserName] = useState<string | null>(() => localStorage.getItem("orbit_user_name"));
   const [activeSection, setActiveSection] = useState("chats");
   const [selectedChat, setSelectedChat] = useState<number | null>(null);
   const [mobileShowChat, setMobileShowChat] = useState(false);
+
+  if (!userName) {
+    return (
+      <LoginScreen
+        onEnter={(name) => {
+          localStorage.setItem("orbit_user_name", name);
+          setUserName(name);
+        }}
+      />
+    );
+  }
 
   const handleSelectChat = (id: number) => {
     setSelectedChat(id);
@@ -593,8 +647,8 @@ export default function Index() {
       case "contacts": return <ContactsSection />;
       case "stories": return <StoriesSection />;
       case "notifications": return <NotificationsSection />;
-      case "profile": return <ProfileSection />;
-      case "settings": return <SettingsSection />;
+      case "profile": return <ProfileSection userName={userName} />;
+      case "settings": return <SettingsSection onLogout={() => { localStorage.removeItem("orbit_user_name"); setUserName(null); }} />;
       case "search": return <SearchSection />;
       default: return null;
     }
