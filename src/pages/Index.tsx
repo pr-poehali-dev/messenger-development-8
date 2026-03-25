@@ -382,8 +382,18 @@ function NotificationsSection() {
   );
 }
 
-function ProfileSection({ userName }: { userName: string }) {
+function ProfileSection({ userName, onRename }: { userName: string; onRename: (name: string) => void }) {
   const initials = userName.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(userName);
+
+  const handleSave = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    onRename(trimmed);
+    setEditing(false);
+  };
+
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="p-4 pb-3">
@@ -399,7 +409,28 @@ function ProfileSection({ userName }: { userName: string }) {
               <Icon name="Camera" size={12} className="text-background" />
             </div>
           </div>
-          <h3 className="text-xl font-bold text-foreground">{userName}</h3>
+          {editing ? (
+            <div className="flex items-center gap-2 w-full max-w-[220px]">
+              <input
+                autoFocus
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setEditing(false); }}
+                className="flex-1 bg-secondary rounded-xl px-3 py-1.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-neon/40 text-center"
+              />
+              <button onClick={handleSave} className="w-7 h-7 rounded-full neon-bg flex items-center justify-center flex-shrink-0">
+                <Icon name="Check" size={13} className="text-background" />
+              </button>
+              <button onClick={() => setEditing(false)} className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
+                <Icon name="X" size={13} className="text-muted-foreground" />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => { setDraft(userName); setEditing(true); }} className="group flex items-center gap-1.5">
+              <h3 className="text-xl font-bold text-foreground group-hover:text-neon transition-colors">{userName}</h3>
+              <Icon name="Pencil" size={13} className="text-muted-foreground group-hover:text-neon transition-colors mt-0.5" />
+            </button>
+          )}
           <p className="text-sm text-neon mt-1">@orbit_yura</p>
           <p className="text-sm text-muted-foreground mt-2 text-center max-w-[200px]">Разработчик · Люблю космос и чистый код 🚀</p>
         </div>
@@ -433,10 +464,6 @@ function ProfileSection({ userName }: { userName: string }) {
             </div>
           ))}
         </div>
-
-        <button className="w-full mt-6 mb-4 py-3 rounded-xl bg-neon/10 border border-neon/20 text-neon text-sm font-semibold hover:bg-neon/20 transition-colors">
-          Редактировать профиль
-        </button>
       </div>
     </div>
   );
@@ -647,7 +674,7 @@ export default function Index() {
       case "contacts": return <ContactsSection />;
       case "stories": return <StoriesSection />;
       case "notifications": return <NotificationsSection />;
-      case "profile": return <ProfileSection userName={userName} />;
+      case "profile": return <ProfileSection userName={userName} onRename={(name) => { localStorage.setItem("orbit_user_name", name); setUserName(name); }} />;
       case "settings": return <SettingsSection onLogout={() => { localStorage.removeItem("orbit_user_name"); setUserName(null); }} />;
       case "search": return <SearchSection />;
       default: return null;
