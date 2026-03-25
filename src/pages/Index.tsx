@@ -5,9 +5,10 @@ const API = {
   auth: "https://functions.poehali.dev/b040de66-5e20-4906-a61b-bea7f8e3febf",
   chats: "https://functions.poehali.dev/51e8d7db-6606-418f-8a69-eaf89248651b",
   messages: "https://functions.poehali.dev/3ec21eee-9c62-46fe-9297-17ede0d20e50",
+  uploadAvatar: "https://functions.poehali.dev/d6116623-bf0f-401f-8f03-3c809016d578",
 };
 
-interface User { id: string; name: string; invite_code: string }
+interface User { id: string; name: string; invite_code: string; avatar_url?: string }
 interface Chat { id: string; partner_id: string; partner_name: string; last_msg: string | null; last_time: string | null }
 interface Message { id: number; sender_id: string; sender_name: string; text: string; created_at: string }
 
@@ -18,13 +19,15 @@ const SECTIONS = [
   { id: "settings", icon: "Settings", label: "Настройки" },
 ];
 
-function Avatar({ name, size = "md", online }: { name: string; size?: "sm" | "md" | "lg"; online?: boolean }) {
+function Avatar({ name, avatarUrl, size = "md", online }: { name: string; avatarUrl?: string; size?: "sm" | "md" | "lg"; online?: boolean }) {
   const initials = name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
-  const sizes = { sm: "w-8 h-8 text-xs", md: "w-11 h-11 text-sm", lg: "w-14 h-14 text-base" };
+  const sizes = { sm: "w-8 h-8 text-xs", md: "w-11 h-11 text-sm", lg: "w-20 h-20 text-base" };
   return (
     <div className="relative flex-shrink-0">
-      <div className={`${sizes[size]} rounded-full bg-secondary flex items-center justify-center font-semibold text-foreground`}>
-        {initials}
+      <div className={`${sizes[size]} rounded-full bg-secondary flex items-center justify-center font-semibold text-foreground overflow-hidden`}>
+        {avatarUrl
+          ? <img src={avatarUrl} alt={name} className="w-full h-full object-cover" />
+          : initials}
       </div>
       {online && <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-neon border-2 border-background" />}
     </div>
@@ -435,10 +438,12 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
 }
 
 // ——— Profile Section ———
-function ProfileSection({ user, onRename }: { user: User; onRename: (name: string) => void }) {
+function ProfileSection({ user, onRename, onAvatarChange }: { user: User; onRename: (name: string) => void; onAvatarChange: (url: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(user.name);
   const [copied, setCopied] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${user.invite_code}`;
 
@@ -455,6 +460,25 @@ function ProfileSection({ user, onRename }: { user: User; onRename: (name: strin
     setEditing(false);
   };
 
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = (reader.result as string).split(",")[1];
+      const res = await fetch(API.uploadAvatar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id, image_base64: base64, content_type: file.type }),
+      });
+      const data = await res.json();
+      setUploading(false);
+      if (data.avatar_url) onAvatarChange(data.avatar_url);
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="p-4 pb-3">
@@ -462,7 +486,15 @@ function ProfileSection({ user, onRename }: { user: User; onRename: (name: strin
       </div>
       <div className="px-4">
         <div className="flex flex-col items-center py-6 mb-4">
-          <Avatar name={user.name} size="lg" />
+          <div className="relative cursor-pointer group" onClick={() => fileInputRef.current?.click()}>
+            <Avatar name={user.name} avatarUrl={user.avatar_url} size="lg" />
+            <div className={`absolute inset-0 rounded-full flex items-center justify-center transition-all ${uploading ? "bg-black/50" : "bg-black/0 group-hover:bg-black/40"}`}>
+              {uploading
+                ? <Icon name="Loader" size={20} className="text-white animate-spin" />
+                : <Icon name="Camera" size={20} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />}
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+          </div>
           <div className="mt-4">
             {editing ? (
               <div className="flex items-center gap-2">
@@ -581,6 +613,11 @@ export default function Index() {
           user={user}
           onRename={(name) => {
             const updated = { ...user, name };
+            localStorage.setItem("orbit_user", JSON.stringify(updated));
+            setUser(updated);
+          }}
+          onAvatarChange={(avatar_url) => {
+            const updated = { ...user, avatar_url };
             localStorage.setItem("orbit_user", JSON.stringify(updated));
             setUser(updated);
           }}
