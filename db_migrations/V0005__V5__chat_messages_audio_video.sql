@@ -1,0 +1,2 @@
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS audio_url TEXT;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS video_url TEXT;

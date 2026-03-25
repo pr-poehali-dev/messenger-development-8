@@ -10,7 +10,7 @@ const API = {
 
 interface User { id: string; name: string; invite_code: string; avatar_url?: string }
 interface Chat { id: string; partner_id: string; partner_name: string; partner_avatar?: string; last_msg: string | null; last_time: string | null }
-interface Message { id: number; sender_id: string; sender_name: string; text: string; image_url?: string; created_at: string }
+interface Message { id: number; sender_id: string; sender_name: string; text: string; image_url?: string; audio_url?: string; video_url?: string; created_at: string }
 
 const SECTIONS = [
   { id: "chats", icon: "MessageCircle", label: "Чаты" },
@@ -309,17 +309,28 @@ function useNotifications(partnerName: string) {
   return { requestPermission, notify };
 }
 
+type RecordingMode = "audio" | "video" | null;
+type MediaPreview = { base64: string; contentType: string; dataUrl: string; kind: "image" | "audio" | "video" };
+
 // ——— Chat View ———
 function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [msg, setMsg] = useState("");
   const [sending, setSending] = useState(false);
-  const [imagePreview, setImagePreview] = useState<{ base64: string; contentType: string; dataUrl: string } | null>(null);
+  const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [recordingMode, setRecordingMode] = useState<RecordingMode>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordingSec, setRecordingSec] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastIdRef = useRef(0);
   const isFirstLoad = useRef(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const videoPreviewRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const { requestPermission, notify } = useNotifications(chat.partner_name);
 
   useEffect(() => { requestPermission(); }, [requestPermission]);
@@ -367,24 +378,81 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
     reader.onload = () => {
       const dataUrl = reader.result as string;
       const base64 = dataUrl.split(",")[1];
-      setImagePreview({ base64, contentType: file.type, dataUrl });
+      setMediaPreview({ base64, contentType: file.type, dataUrl, kind: "image" });
     };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
 
+  const startRecording = async (mode: RecordingMode) => {
+    if (!mode) return;
+    try {
+      const stream = mode === "audio"
+        ? await navigator.mediaDevices.getUserMedia({ audio: true })
+        : await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      streamRef.current = stream;
+      if (mode === "video" && videoPreviewRef.current) {
+        videoPreviewRef.current.srcObject = stream;
+        videoPreviewRef.current.play();
+      }
+      const mimeType = mode === "audio"
+        ? (MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/ogg")
+        : (MediaRecorder.isTypeSupported("video/webm") ? "video/webm" : "video/mp4");
+      const recorder = new MediaRecorder(stream, { mimeType });
+      chunksRef.current = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const dataUrl = URL.createObjectURL(blob);
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(",")[1];
+          setMediaPreview({ base64, contentType: mimeType, dataUrl, kind: mode as "audio" | "video" });
+        };
+        reader.readAsDataURL(blob);
+        stream.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+      setRecordingSec(0);
+      timerRef.current = setInterval(() => setRecordingSec(s => s + 1), 1000);
+    } catch (e) { void e; }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    if (timerRef.current) clearInterval(timerRef.current);
+    setRecording(false);
+    setRecordingMode(null);
+  };
+
+  const cancelRecording = () => {
+    mediaRecorderRef.current?.stop();
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    chunksRef.current = [];
+    if (timerRef.current) clearInterval(timerRef.current);
+    setRecording(false);
+    setRecordingMode(null);
+    setMediaPreview(null);
+  };
+
   const handleSend = async () => {
     if (sending) return;
     const text = msg.trim();
-    if (!text && !imagePreview) return;
+    if (!text && !mediaPreview) return;
     setSending(true);
     setMsg("");
     const payload: Record<string, string> = { chat_id: chat.id, sender_id: user.id };
     if (text) payload.text = text;
-    if (imagePreview) {
-      payload.image_base64 = imagePreview.base64;
-      payload.content_type = imagePreview.contentType;
-      setImagePreview(null);
+    if (mediaPreview) {
+      if (mediaPreview.kind === "image") payload.image_base64 = mediaPreview.base64;
+      if (mediaPreview.kind === "audio") payload.audio_base64 = mediaPreview.base64;
+      if (mediaPreview.kind === "video") payload.video_base64 = mediaPreview.base64;
+      payload.content_type = mediaPreview.contentType;
+      setMediaPreview(null);
     }
     await fetch(API.messages, {
       method: "POST",
@@ -400,8 +468,9 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
   };
 
   const formatTime = (iso: string) => new Date(iso).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+  const fmtSec = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-  const canSend = (msg.trim() || imagePreview) && !sending;
+  const canSend = (msg.trim() || mediaPreview) && !sending;
 
   return (
     <div className="flex flex-col h-full animate-slide-in-right">
@@ -441,6 +510,16 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
                     <img src={m.image_url} alt="фото" className="max-w-[240px] w-full object-cover hover:opacity-90 transition-opacity" />
                   </div>
                 )}
+                {m.audio_url && (
+                  <div className={`px-3 py-2 rounded-2xl mb-0.5 ${isOut ? "msg-bubble-out rounded-br-sm" : "msg-bubble-in rounded-bl-sm"}`}>
+                    <audio src={m.audio_url} controls className="h-8 w-48 max-w-full" style={{ colorScheme: "dark" }} />
+                  </div>
+                )}
+                {m.video_url && (
+                  <div className={`rounded-2xl overflow-hidden mb-0.5 ${isOut ? "rounded-br-sm" : "rounded-bl-sm"}`}>
+                    <video src={m.video_url} controls className="max-w-[240px] w-full rounded-2xl" />
+                  </div>
+                )}
                 {m.text && (
                   <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${isOut ? "msg-bubble-out text-background rounded-br-sm" : "msg-bubble-in text-foreground rounded-bl-sm"}`}>
                     {m.text}
@@ -455,35 +534,103 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
       </div>
 
       <div className="px-4 pb-4 pt-2">
-        {imagePreview && (
+        {/* Превью видео во время записи */}
+        {recordingMode === "video" && recording && (
+          <div className="mb-2 relative rounded-xl overflow-hidden bg-black">
+            <video ref={videoPreviewRef} muted className="w-full max-h-40 object-cover" />
+            <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/60 rounded-full px-2 py-1">
+              <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+              <span className="text-xs text-white">{fmtSec(recordingSec)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Аудио-запись в процессе */}
+        {recordingMode === "audio" && recording && (
+          <div className="mb-2 flex items-center gap-3 bg-secondary rounded-xl px-4 py-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-destructive animate-pulse flex-shrink-0" />
+            <span className="text-sm text-foreground flex-1">Запись... {fmtSec(recordingSec)}</span>
+            <button onClick={cancelRecording} className="text-xs text-muted-foreground hover:text-destructive">Отмена</button>
+            <button onClick={stopRecording} className="w-8 h-8 rounded-full neon-bg flex items-center justify-center">
+              <Icon name="Square" size={13} className="text-background" />
+            </button>
+          </div>
+        )}
+
+        {/* Превью записанного медиа */}
+        {mediaPreview && (
           <div className="mb-2 relative inline-block">
-            <img src={imagePreview.dataUrl} alt="превью" className="h-24 rounded-xl object-cover" />
-            <button onClick={() => setImagePreview(null)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
+            {mediaPreview.kind === "image" && (
+              <img src={mediaPreview.dataUrl} alt="превью" className="h-24 rounded-xl object-cover" />
+            )}
+            {mediaPreview.kind === "audio" && (
+              <div className="flex items-center gap-2 bg-secondary rounded-xl px-3 py-2">
+                <Icon name="Mic" size={16} className="text-neon" />
+                <audio src={mediaPreview.dataUrl} controls className="h-8" />
+              </div>
+            )}
+            {mediaPreview.kind === "video" && (
+              <video src={mediaPreview.dataUrl} controls className="h-24 rounded-xl" />
+            )}
+            <button onClick={() => setMediaPreview(null)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
               <Icon name="X" size={11} className="text-white" />
             </button>
           </div>
         )}
-        <div className="flex items-end gap-2 bg-secondary rounded-2xl px-3 py-2">
-          <button onClick={() => fileInputRef.current?.click()} className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-neon transition-colors flex-shrink-0">
-            <Icon name="Paperclip" size={18} />
-          </button>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-          <textarea
-            value={msg}
-            onChange={e => setMsg(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Сообщение..."
-            rows={1}
-            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none resize-none py-1.5 max-h-32"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${canSend ? "neon-bg text-background" : "bg-muted text-muted-foreground"}`}
-          >
-            {sending ? <Icon name="Loader" size={15} className="animate-spin" /> : <Icon name="Send" size={16} />}
-          </button>
-        </div>
+
+        {/* Панель записи видео (кнопка стоп) */}
+        {recordingMode === "video" && recording && (
+          <div className="flex gap-2 mb-2">
+            <button onClick={cancelRecording} className="flex-1 py-2 rounded-xl bg-secondary text-sm text-muted-foreground">Отмена</button>
+            <button onClick={stopRecording} className="flex-1 py-2 rounded-xl bg-destructive text-sm text-white font-semibold">Остановить</button>
+          </div>
+        )}
+
+        {/* Поле ввода (скрывается во время записи) */}
+        {!recording && (
+          <div className="flex items-end gap-2 bg-secondary rounded-2xl px-3 py-2">
+            <button onClick={() => fileInputRef.current?.click()} className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-neon transition-colors flex-shrink-0">
+              <Icon name="Paperclip" size={18} />
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+            <textarea
+              value={msg}
+              onChange={e => setMsg(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder="Сообщение..."
+              rows={1}
+              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none resize-none py-1.5 max-h-32"
+            />
+            {!msg.trim() && !mediaPreview && (
+              <>
+                <button
+                  onClick={() => { setRecordingMode("audio"); startRecording("audio"); }}
+                  className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-neon transition-colors flex-shrink-0"
+                  title="Голосовое сообщение"
+                >
+                  <Icon name="Mic" size={18} />
+                </button>
+                <button
+                  onClick={() => { setRecordingMode("video"); startRecording("video"); }}
+                  className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-neon transition-colors flex-shrink-0"
+                  title="Видеосообщение"
+                >
+                  <Icon name="Video" size={18} />
+                </button>
+              </>
+            )}
+            {(msg.trim() || mediaPreview) && (
+              <button
+                onClick={handleSend}
+                disabled={!canSend}
+                className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${canSend ? "neon-bg text-background" : "bg-muted text-muted-foreground"}`}
+              >
+                {sending ? <Icon name="Loader" size={15} className="animate-spin" /> : <Icon name="Send" size={16} />}
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-center gap-1 mt-2">
           <Icon name="Lock" size={10} className="text-muted-foreground/50" />
           <span className="text-[10px] text-muted-foreground/50">Сквозное шифрование</span>
