@@ -1,7 +1,8 @@
 """
-Messages API: история сообщений, отправка текста, фото, аудио и видео.
-GET  /?chat_id=...&since_id=0   — получить сообщения
-POST / body {chat_id, sender_id, text?, image_base64?, audio_base64?, video_base64?, content_type?}
+Messages API: история сообщений, отправка текста/фото/аудио/видео, реакции.
+GET  /?chat_id=...&since_id=0           — получить сообщения с реакциями
+POST / body {chat_id, sender_id, ...}   — отправить сообщение
+POST / body {action:"react", message_id, user_id, emoji} — toggle-реакция
 """
 
 import json
@@ -52,6 +53,24 @@ def handler(event: dict, context) -> dict:
             LIMIT 100
         """, (chat_id, since_id))
         rows = cur.fetchall()
+
+        msg_ids = [r[0] for r in rows]
+        reactions_map = {}
+        if msg_ids:
+            ids_str = ",".join(str(i) for i in msg_ids)
+            cur.execute(f"""
+                SELECT message_id, emoji, COUNT(*) as cnt,
+                       array_agg(user_id::text) as user_ids
+                FROM message_reactions
+                WHERE message_id IN ({ids_str})
+                GROUP BY message_id, emoji
+            """)
+            for rr in cur.fetchall():
+                mid = rr[0]
+                if mid not in reactions_map:
+                    reactions_map[mid] = []
+                reactions_map[mid].append({"emoji": rr[1], "count": rr[2], "user_ids": rr[3]})
+
         cur.close()
         conn.close()
 
@@ -65,6 +84,7 @@ def handler(event: dict, context) -> dict:
                 "audio_url": r[5],
                 "video_url": r[6],
                 "created_at": r[7].astimezone(timezone.utc).isoformat(),
+                "reactions": reactions_map.get(r[0], []),
             }
             for r in rows
         ]
@@ -73,6 +93,34 @@ def handler(event: dict, context) -> dict:
 
     if method == "POST":
         body = json.loads(event.get("body") or "{}")
+
+        # Toggle-реакция
+        if body.get("action") == "react":
+            message_id = body.get("message_id")
+            user_id = (body.get("user_id") or "").strip()
+            emoji = (body.get("emoji") or "").strip()
+            if not message_id or not user_id or not emoji:
+                return {"statusCode": 400, "headers": {**CORS, "Content-Type": "application/json"},
+                        "body": json.dumps({"error": "message_id, user_id and emoji are required"})}
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM message_reactions WHERE message_id = %s AND user_id = %s AND emoji = %s",
+                        (message_id, user_id, emoji))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("DELETE FROM message_reactions WHERE message_id = %s AND user_id = %s AND emoji = %s",
+                            (message_id, user_id, emoji))
+                action = "removed"
+            else:
+                cur.execute("INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (%s, %s, %s)",
+                            (message_id, user_id, emoji))
+                action = "added"
+            conn.commit()
+            cur.close()
+            conn.close()
+            return {"statusCode": 200, "headers": {**CORS, "Content-Type": "application/json"},
+                    "body": json.dumps({"action": action})}
+
         chat_id = (body.get("chat_id") or "").strip()
         sender_id = (body.get("sender_id") or "").strip()
         text = (body.get("text") or "").strip()[:2000]

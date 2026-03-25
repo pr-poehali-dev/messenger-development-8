@@ -10,7 +10,8 @@ const API = {
 
 interface User { id: string; name: string; invite_code: string; avatar_url?: string }
 interface Chat { id: string; partner_id: string; partner_name: string; partner_avatar?: string; last_msg: string | null; last_time: string | null }
-interface Message { id: number; sender_id: string; sender_name: string; text: string; image_url?: string; audio_url?: string; video_url?: string; created_at: string }
+interface Reaction { emoji: string; count: number; user_ids: string[] }
+interface Message { id: number; sender_id: string; sender_name: string; text: string; image_url?: string; audio_url?: string; video_url?: string; reactions: Reaction[]; created_at: string }
 
 const SECTIONS = [
   { id: "chats", icon: "MessageCircle", label: "Чаты" },
@@ -309,6 +310,8 @@ function useNotifications(partnerName: string) {
   return { requestPermission, notify };
 }
 
+const EMOJI_LIST = ["👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👎"];
+
 type RecordingMode = "audio" | "video" | null;
 type MediaPreview = { base64: string; contentType: string; dataUrl: string; kind: "image" | "audio" | "video" };
 
@@ -319,6 +322,7 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
   const [sending, setSending] = useState(false);
   const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [emojiPickerMsgId, setEmojiPickerMsgId] = useState<number | null>(null);
   const [recordingMode, setRecordingMode] = useState<RecordingMode>(null);
   const [recording, setRecording] = useState(false);
   const [recordingSec, setRecordingSec] = useState(0);
@@ -467,6 +471,33 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
+  const toggleReaction = async (messageId: number, emoji: string) => {
+    setEmojiPickerMsgId(null);
+    await fetch(API.messages, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "react", message_id: messageId, user_id: user.id, emoji }),
+    });
+    // оптимистичное обновление
+    setMessages(prev => prev.map(m => {
+      if (m.id !== messageId) return m;
+      const existing = m.reactions.find(r => r.emoji === emoji);
+      const hasMyReaction = existing?.user_ids.includes(user.id);
+      if (hasMyReaction) {
+        const newCount = existing!.count - 1;
+        return { ...m, reactions: newCount === 0
+          ? m.reactions.filter(r => r.emoji !== emoji)
+          : m.reactions.map(r => r.emoji === emoji ? { ...r, count: newCount, user_ids: r.user_ids.filter(id => id !== user.id) } : r)
+        };
+      } else {
+        if (existing) {
+          return { ...m, reactions: m.reactions.map(r => r.emoji === emoji ? { ...r, count: r.count + 1, user_ids: [...r.user_ids, user.id] } : r) };
+        }
+        return { ...m, reactions: [...m.reactions, { emoji, count: 1, user_ids: [user.id] }] };
+      }
+    }));
+  };
+
   const formatTime = (iso: string) => new Date(iso).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
   const fmtSec = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
@@ -493,7 +524,7 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-2">
+      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-2" onClick={() => setEmojiPickerMsgId(null)}>
         {messages.length === 0 && (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-xs text-muted-foreground">Нет сообщений. Напишите первым!</p>
@@ -502,8 +533,29 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
         {messages.map((m) => {
           const isOut = m.sender_id === user.id;
           return (
-            <div key={m.id} className={`flex ${isOut ? "justify-end" : "justify-start"}`}>
-              <div className="max-w-[72%]">
+            <div key={m.id} className={`flex ${isOut ? "justify-end" : "justify-start"}`}
+              onClick={() => emojiPickerMsgId === m.id ? setEmojiPickerMsgId(null) : null}>
+              <div className="max-w-[72%] relative group">
+                {/* Пикер эмодзи */}
+                {emojiPickerMsgId === m.id && (
+                  <div className={`absolute z-20 bottom-full mb-1 flex gap-1 bg-card border border-border rounded-2xl px-2 py-1.5 shadow-xl animate-fade-in ${isOut ? "right-0" : "left-0"}`}>
+                    {EMOJI_LIST.map(e => (
+                      <button key={e} onClick={() => toggleReaction(m.id, e)}
+                        className="text-lg hover:scale-125 transition-transform leading-none">
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Кнопка реакции по ховеру */}
+                <button
+                  onClick={(ev) => { ev.stopPropagation(); setEmojiPickerMsgId(emojiPickerMsgId === m.id ? null : m.id); }}
+                  className={`absolute top-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center text-xs ${isOut ? "-left-7" : "-right-7"}`}
+                >
+                  😊
+                </button>
+
                 {m.image_url && (
                   <div className={`rounded-2xl overflow-hidden mb-0.5 cursor-pointer ${isOut ? "rounded-br-sm" : "rounded-bl-sm"}`}
                     onClick={() => setLightbox(m.image_url!)}>
@@ -525,6 +577,20 @@ function ChatView({ chat, user, onBack }: { chat: Chat; user: User; onBack: () =
                     {m.text}
                   </div>
                 )}
+
+                {/* Реакции */}
+                {m.reactions?.length > 0 && (
+                  <div className={`flex flex-wrap gap-1 mt-1 ${isOut ? "justify-end" : "justify-start"}`}>
+                    {m.reactions.map(r => (
+                      <button key={r.emoji} onClick={() => toggleReaction(m.id, r.emoji)}
+                        className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs border transition-all ${r.user_ids.includes(user.id) ? "bg-neon/15 border-neon/40 text-neon" : "bg-secondary border-border text-foreground hover:bg-neon/10"}`}>
+                        <span>{r.emoji}</span>
+                        {r.count > 1 && <span>{r.count}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <p className={`text-xs text-muted-foreground mt-1 ${isOut ? "text-right" : "text-left"}`}>{formatTime(m.created_at)}</p>
               </div>
             </div>
