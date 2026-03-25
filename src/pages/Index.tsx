@@ -86,10 +86,11 @@ function LoginScreen({ onEnter }: { onEnter: (user: User) => void }) {
 }
 
 // ——— Chats Section ———
-function ChatsSection({ user, onSelectChat, selectedChatId }: {
+function ChatsSection({ user, onSelectChat, selectedChatId, onUnreadChange }: {
   user: User;
   onSelectChat: (chat: Chat) => void;
   selectedChatId: string | null;
+  onUnreadChange: (count: number) => void;
 }) {
   const [chats, setChats] = useState<Chat[]>([]);
   const [showInvite, setShowInvite] = useState(false);
@@ -100,17 +101,42 @@ function ChatsSection({ user, onSelectChat, selectedChatId }: {
 
   const inviteLink = `${window.location.origin}${window.location.pathname}?invite=${user.invite_code}`;
 
+  const getReadTimes = (): Record<string, string> => {
+    try { return JSON.parse(localStorage.getItem("orbit_read_times") || "{}"); } catch { return {}; }
+  };
+
   const loadChats = useCallback(async () => {
     const res = await fetch(`${API.chats}?user_id=${user.id}`);
     const data = await res.json();
-    if (data.chats) setChats(data.chats);
-  }, [user.id]);
+    if (data.chats) {
+      setChats(data.chats);
+      const readTimes = getReadTimes();
+      const count = data.chats.filter((c: Chat) => {
+        if (!c.last_time) return false;
+        if (c.id === selectedChatId) return false;
+        const read = readTimes[c.id];
+        return !read || new Date(c.last_time) > new Date(read);
+      }).length;
+      onUnreadChange(count);
+    }
+  }, [user.id, selectedChatId, onUnreadChange]);
 
   useEffect(() => {
     loadChats();
     const interval = setInterval(loadChats, 5000);
     return () => clearInterval(interval);
   }, [loadChats]);
+
+  const markRead = (chatId: string) => {
+    const times = getReadTimes();
+    times[chatId] = new Date().toISOString();
+    localStorage.setItem("orbit_read_times", JSON.stringify(times));
+  };
+
+  const handleSelectChat = (chat: Chat) => {
+    markRead(chat.id);
+    onSelectChat(chat);
+  };
 
   const handleAddChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,7 +157,9 @@ function ChatsSection({ user, onSelectChat, selectedChatId }: {
       setShowInvite(false);
       setInviteInput("");
       loadChats();
-      onSelectChat({ id: data.id, partner_id: data.partner_id, partner_name: data.partner_name, last_msg: null, last_time: null });
+      const chat = { id: data.id, partner_id: data.partner_id, partner_name: data.partner_name, last_msg: null, last_time: null };
+      markRead(data.id);
+      onSelectChat(chat);
     }
   };
 
@@ -209,7 +237,7 @@ function ChatsSection({ user, onSelectChat, selectedChatId }: {
           chats.map((chat, i) => (
             <button
               key={chat.id}
-              onClick={() => onSelectChat(chat)}
+              onClick={() => handleSelectChat(chat)}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all animate-fade-in group ${
                 selectedChatId === chat.id ? "bg-neon/10 border border-neon/20" : "hover:bg-secondary/60"
               }`}
@@ -223,7 +251,15 @@ function ChatsSection({ user, onSelectChat, selectedChatId }: {
                   </span>
                   <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{formatTime(chat.last_time)}</span>
                 </div>
-                <p className="text-xs text-muted-foreground truncate">{chat.last_msg || "Нет сообщений"}</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground truncate">{chat.last_msg || "Нет сообщений"}</p>
+                  {(() => {
+                    if (!chat.last_time || chat.id === selectedChatId) return null;
+                    const read = getReadTimes()[chat.id];
+                    const hasUnread = !read || new Date(chat.last_time) > new Date(read);
+                    return hasUnread ? <span className="ml-2 w-2.5 h-2.5 rounded-full neon-bg flex-shrink-0" /> : null;
+                  })()}
+                </div>
               </div>
             </button>
           ))
@@ -495,6 +531,7 @@ export default function Index() {
   const [activeSection, setActiveSection] = useState("chats");
   const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [mobileShowChat, setMobileShowChat] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Обработка invite-ссылки в URL
   useEffect(() => {
@@ -538,7 +575,7 @@ export default function Index() {
 
   const renderSection = () => {
     switch (activeSection) {
-      case "chats": return <ChatsSection user={user} onSelectChat={handleSelectChat} selectedChatId={selectedChat?.id ?? null} />;
+      case "chats": return <ChatsSection user={user} onSelectChat={handleSelectChat} selectedChatId={selectedChat?.id ?? null} onUnreadChange={setUnreadCount} />;
       case "profile": return (
         <ProfileSection
           user={user}
@@ -582,6 +619,11 @@ export default function Index() {
               <Icon name={s.icon} fallback="Circle" size={19} />
               {activeSection === s.id && (
                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r-full neon-bg" />
+              )}
+              {s.id === "chats" && unreadCount > 0 && activeSection !== "chats" && (
+                <span className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 rounded-full neon-bg text-background text-[10px] font-bold flex items-center justify-center">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
               )}
             </button>
           ))}
