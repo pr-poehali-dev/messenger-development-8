@@ -234,17 +234,38 @@ function ChatsSection({ user, onSelectChat, selectedChatId }: {
 }
 
 function useNotifications(partnerName: string) {
+  const audioCtx = useRef<AudioContext | null>(null);
+
+  const playSound = useCallback(() => {
+    try {
+      if (!audioCtx.current) audioCtx.current = new AudioContext();
+      const ctx = audioCtx.current;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+    } catch (e) { void e; }
+  }, []);
+
   const requestPermission = useCallback(async () => {
     if (!("Notification" in window)) return;
     if (Notification.permission === "default") await Notification.requestPermission();
   }, []);
 
   const notify = useCallback((text: string) => {
+    playSound();
     if (!("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
     if (document.visibilityState === "visible") return;
     new Notification(partnerName, { body: text, icon: "/favicon.ico" });
-  }, [partnerName]);
+  }, [partnerName, playSound]);
 
   return { requestPermission, notify };
 }
